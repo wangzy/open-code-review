@@ -9,7 +9,7 @@ The agent can read full file contents, search the codebase, inspect other change
 ### Via NPM (Recommended)
 
 ```bash
-npm install -g @alibaba/open-code-review
+npm install -g @alibaba-group/open-code-review
 ```
 
 After installation, the `ocr` command is available globally.

@@ -5,7 +5,7 @@ AI-powered code review tool that reads Git diffs, sends changed files to a confi
 ## Install
 
 ```bash
-npm install -g @alibaba/open-code-review
+npm install -g @alibaba-group/open-code-review
 ```
 
 After installation, the `ocr` command is available globally.
@@ -14,7 +14,7 @@ After installation, the `ocr` command is available globally.
 
 ```bash
 # Install specific version
-OCR_VERSION=v1.0.0 npm install -g @alibaba/open-code-review
+OCR_VERSION=v1.0.0 npm install -g @alibaba-group/open-code-review
 ```
 
 ## Prerequisites
