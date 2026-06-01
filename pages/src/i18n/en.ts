@@ -161,6 +161,8 @@ export const en: TranslationKeys = {
   'docs.reviewFlag7Desc': 'Max concurrent file reviews',
   'docs.reviewFlag8Desc': 'Single task timeout (minutes)',
   'docs.reviewFlag9Desc': 'Output audience: human (show process) or agent (summary only)',
+  'docs.reviewFlag10Desc': 'Max tool call rounds per file; only takes effect when greater than template default',
+  'docs.reviewFlag10Default': 'Built-in',
   'docs.reviewNote': 'Note: <code>--from/--to</code> and <code>--commit</code> cannot be used together. When specifying <code>--from</code>, <code>--to</code> must also be specified.',
 
   'docs.viewerTitle': 'ocr viewer',
