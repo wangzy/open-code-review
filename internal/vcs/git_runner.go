@@ -102,7 +102,10 @@ func (g *GitRunner) readLinesFromDisk(path string, startLine, maxLines int) ([]s
 	return scanLines(f, startLine, maxLines)
 }
 
-func (g *GitRunner) readLinesFromGitShow(ctx context.Context, path string, startLine, maxLines int) ([]string, int, error) {
+func (g *GitRunner) readLinesFromGitShow(parentCtx context.Context, path string, startLine, maxLines int) ([]string, int, error) {
+	ctx, cancel := context.WithTimeout(parentCtx, 30*time.Second)
+	defer cancel()
+
 	args := []string{"-c", "core.quotepath=false", "show", "--end-of-options", g.ref + ":" + path}
 
 	if g.runner != nil {
@@ -276,7 +279,6 @@ func gitGrep(ctx context.Context, repoDir, ref, searchText string, caseSensitive
 	}
 
 	lines := strings.Split(strings.TrimRight(outStr, "\n"), "\n")
-	truncated := len(lines) >= gitGrepMaxCount
 
 	type match struct {
 		lineNum int
@@ -287,39 +289,56 @@ func gitGrep(ctx context.Context, repoDir, ref, searchText string, caseSensitive
 	seen := make(map[string]bool)
 
 	hasRef := ref != ""
-	splitN := 3
-	offset := 0
-	if hasRef {
-		splitN = 4
-		offset = 1
-	}
-
-	var sb strings.Builder
-	if truncated {
-		sb.WriteString(fmt.Sprintf("Note: The results have been truncated. Only showing first %d results.\n", gitGrepMaxCount))
-	}
 
 	for _, line := range lines {
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, ":", splitN)
-		if len(parts) < splitN {
+		// Parse from right side to tolerate colons in paths (e.g., Windows drive letters).
+		lastColon := strings.LastIndex(line, ":")
+		if lastColon < 0 {
 			continue
 		}
-		fname := parts[offset]
-		m := match{}
-		lnVal, parseErr := parseInt(parts[offset+1])
+		content := line[lastColon+1:]
+		rest := line[:lastColon]
+		secondLastColon := strings.LastIndex(rest, ":")
+		if secondLastColon < 0 {
+			continue
+		}
+		lnVal, parseErr := parseInt(rest[secondLastColon+1:])
 		if parseErr != nil {
 			continue
 		}
-		m.lineNum = lnVal
-		m.content = parts[offset+2]
+		fname := rest[:secondLastColon]
+		if hasRef {
+			// Strip the ref prefix from git grep output when a ref is specified.
+			// Format: "ref:path:line:content" → path is after first colon.
+			firstColon := strings.Index(fname, ":")
+			if firstColon >= 0 {
+				fname = fname[firstColon+1:]
+			}
+		}
+		m := match{lineNum: lnVal, content: content}
 		if !seen[fname] {
 			seen[fname] = true
 			fileOrder = append(fileOrder, fname)
 		}
 		fileMatches[fname] = append(fileMatches[fname], m)
+	}
+
+	// --max-count limits per file in git grep, not globally.
+	// Check if any file has exactly gitGrepMaxCount matches — it may have been truncated.
+	truncated := false
+	for _, matches := range fileMatches {
+		if len(matches) >= gitGrepMaxCount {
+			truncated = true
+			break
+		}
+	}
+
+	var sb strings.Builder
+	if truncated {
+		sb.WriteString(fmt.Sprintf("Note: The results have been truncated. Only showing first %d results per file.\n", gitGrepMaxCount))
 	}
 
 	for _, path := range fileOrder {

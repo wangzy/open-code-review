@@ -25,12 +25,25 @@ const (
 // RefInfo describes the current review target for a VCS backend.
 type RefInfo struct {
 	Mode Mode
-	// Ref is a git revision or perforce changelist number used to read file contents.
-	Ref string
 	// From/To/Commit are the original user-supplied values (branch names, changelists, etc.).
 	From   string
 	To     string
 	Commit string
+}
+
+// ResolveRef returns the revision to use for file-read operations based on mode:
+// - ModeWorkspace: empty (read from disk)
+// - ModeCommit: Commit
+// - ModeRange: To
+func (ri RefInfo) ResolveRef() string {
+	switch ri.Mode {
+	case ModeCommit:
+		return ri.Commit
+	case ModeRange:
+		return ri.To
+	default:
+		return ""
+	}
 }
 
 // Runner abstracts VCS-specific operations for reading files, searching code,

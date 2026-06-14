@@ -1,6 +1,8 @@
 package vcs
 
 import (
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,15 +11,15 @@ import (
 
 // Detect returns the VCS type for the given repository directory.
 // It checks first for Perforce (via p4 client info), then for Git.
-// Returns an error if neither VCS is detected.
-func Detect(repoDir string) Type {
+// If neither is detected, the error describes what went wrong.
+func Detect(repoDir string) (Type, error) {
 	if detectP4(repoDir) {
-		return TypePerforce
+		return TypePerforce, nil
 	}
 	if detectGit(repoDir) {
-		return TypeGit
+		return TypeGit, nil
 	}
-	return TypeGit // default to Git if uncertain
+	return "", fmt.Errorf("no VCS detected in %s", repoDir)
 }
 
 // IsGitRepo returns true if the directory is a Git repository.
@@ -32,7 +34,7 @@ func IsP4Client(repoDir string) bool {
 
 func detectGit(repoDir string) bool {
 	cmd := exec.Command("git", "-C", repoDir, "rev-parse", "--git-dir")
-	cmd.Stderr = nil
+	cmd.Stderr = io.Discard
 	return cmd.Run() == nil
 }
 
@@ -57,8 +59,8 @@ func detectP4(repoDir string) bool {
 	}
 
 	// Fallback: check for .p4config file or p4config file
-	matches, _ := filepath.Glob(filepath.Join(repoDir, ".p4config"))
-	if len(matches) > 0 {
+	matches, err := filepath.Glob(filepath.Join(repoDir, ".p4config"))
+	if err == nil && len(matches) > 0 {
 		return true
 	}
 
@@ -80,8 +82,17 @@ func detectP4(repoDir string) bool {
 
 // P4ClientInfo returns the client name, port, and user from p4 info.
 func P4ClientInfo(repoDir string) (client, port, user string, _ error) {
+	return P4ClientInfoWithEnv(repoDir, nil)
+}
+
+// P4ClientInfoWithEnv returns the client name, port, and user from p4 info,
+// using the provided environment variable overrides.
+func P4ClientInfoWithEnv(repoDir string, env []string) (client, port, user string, _ error) {
 	cmd := exec.Command("p4", "info")
 	cmd.Dir = repoDir
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	out, err := cmd.Output()
 	if err != nil {
 		return "", "", "", err

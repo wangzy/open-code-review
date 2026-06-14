@@ -51,9 +51,3 @@ func (fr *FileReader) Read(ctx context.Context, path string) (string, error) {
 func (fr *FileReader) ReadLines(ctx context.Context, path string, startLine, maxLines int) ([]string, int, error) {
 	return fr.Runner.ReadLines(ctx, path, startLine, maxLines)
 }
-
-// Ref returns an empty string for the new interface (backward compat).
-// This method is kept for code that checks ref but it's no longer the source of truth.
-func (fr *FileReader) Ref() string {
-	return ""
-}

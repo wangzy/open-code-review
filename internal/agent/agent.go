@@ -452,7 +452,11 @@ func (a *Agent) loadP4Diffs(ctx context.Context) error {
 		if a.args.VCSRunner != nil {
 			return a.args.VCSRunner.ReadFile(ctx, path)
 		}
-		return diff.DefaultFileReader(ctx, a.args.RepoDir, path, "", nil)
+		// Fallback: for workspace mode, read from disk; for range/commit, error
+		if a.args.Commit == "" && a.args.From == "" {
+			return diff.DefaultFileReader(ctx, a.args.RepoDir, path, "", nil)
+		}
+		return "", fmt.Errorf("VCSRunner is nil for non-workspace P4 mode; cannot read depot content")
 	}
 
 	parsed, err := diff.ParseDiffTextWithVCS(ctx, diffText, a.args.RepoDir, reader)
@@ -1577,7 +1581,15 @@ func detectP4Branch(args Args) string {
 	if args.P4Client != "" {
 		return args.P4Client
 	}
-	client, _, _, err := vcs.P4ClientInfo(args.RepoDir)
+	// Build env to pass P4Port/P4User if provided (P4ClientInfo currently ignores them)
+	var env []string
+	if args.P4Port != "" {
+		env = append(env, "P4PORT="+args.P4Port)
+	}
+	if args.P4User != "" {
+		env = append(env, "P4USER="+args.P4User)
+	}
+	client, _, _, err := vcs.P4ClientInfoWithEnv(args.RepoDir, env)
 	if err != nil {
 		return ""
 	}

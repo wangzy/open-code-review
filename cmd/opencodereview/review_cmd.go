@@ -31,7 +31,7 @@ func runReview(args []string) error {
 		return nil
 	}
 
-	if err := requireGitRepo(opts.repoDir); err != nil {
+	if err := requireRepo(opts.repoDir, opts.vcsType); err != nil {
 		return err
 	}
 
@@ -55,7 +55,7 @@ func runReview(args []string) error {
 	}
 
 	if opts.commit != "" && opts.background == "" {
-		if msg, err := getCommitMessage(repoDir, opts.commit); err == nil && msg != "" {
+		if msg, err := getCommitMessage(repoDir, opts.commit, opts.p4Client, opts.p4Port, opts.p4User); err == nil && msg != "" {
 			opts.background = msg
 		}
 	}
@@ -105,6 +105,10 @@ func runReview(args []string) error {
 	var vcsRunner vcs.Runner
 	switch vcstype {
 	case vcs.TypePerforce:
+		// P4Runner uses a single changelist number for file reads (p4 print).
+		// For workspace mode ref stays empty; for commit/range modes the target
+		// changelist is used. The --from changelist is only needed during diff
+		// generation, not for file content reads.
 		var ref string
 		if opts.commit != "" {
 			ref = opts.commit
@@ -113,17 +117,12 @@ func runReview(args []string) error {
 		}
 		vcsRunner = vcs.NewP4Runner(repoDir, ref, opts.p4Client, opts.p4Port, opts.p4User)
 	default:
+		// Ref for file reading: to ref for range mode, commit for commit mode, empty for workspace.
 		var ref string
-		refInfo := vcs.RefInfo{
-			Mode:   vcsMode(mode),
-			From:   opts.from,
-			To:     opts.to,
-			Commit: opts.commit,
-		}
-		ref = refInfo.Ref
-		if ref == "" && opts.to != "" {
+		switch mode {
+		case tool.ModeRange:
 			ref = opts.to
-		} else if ref == "" && opts.commit != "" {
+		case tool.ModeCommit:
 			ref = opts.commit
 		}
 		vcsRunner = vcs.NewGitRunner(repoDir, ref, gitRunner)
@@ -231,6 +230,11 @@ func resolveRepoDir(input string, vcsType string) (string, error) {
 		return "", fmt.Errorf("resolve absolute path: %w", err)
 	}
 
+	// Try auto-detection when vcsType is not explicitly set
+	if vcsType == "" {
+		vcsType = string(resolveVCSType("", absPath))
+	}
+
 	if vcsType == "p4" {
 		return resolveP4RepoDir(absPath)
 	}
@@ -264,26 +268,22 @@ func resolveVCSType(flagValue string, repoDir string) vcs.Type {
 	case "git":
 		return vcs.TypeGit
 	default:
-		return vcs.Detect(repoDir)
+		t, err := vcs.Detect(repoDir)
+		if err != nil {
+			return vcs.TypeGit // default to Git if auto-detection fails
+		}
+		return t
 	}
 }
 
-func vcsMode(mode tool.ReviewMode) vcs.Mode {
-	switch mode {
-	case tool.ModeCommit:
-		return vcs.ModeCommit
-	case tool.ModeRange:
-		return vcs.ModeRange
-	default:
-		return vcs.ModeWorkspace
-	}
-}
-
-// requireGitRepo validates that the given directory is part of a git repository.
-func requireGitRepo(dir string) error {
+// requireRepo validates that the given directory is a valid repository of the given VCS type.
+func requireRepo(dir string, vcsType string) error {
 	repoDir, err := filepath.Abs(dir)
 	if err != nil {
 		return fmt.Errorf("resolve path: %w", err)
+	}
+	if vcsType == "p4" {
+		return nil // P4 repos are validated later in resolveRepoDir
 	}
 	out, err := runGitCmd(repoDir, "rev-parse", "--git-dir")
 	if err != nil || len(out) == 0 {
@@ -294,7 +294,7 @@ func requireGitRepo(dir string) error {
 
 func validateReviewRefs(repoDir string, opts reviewOptions) error {
 	// For Perforce, refs are changelist numbers — skip git rev-parse validation.
-	if opts.vcsType == "p4" || vcs.IsP4Client(repoDir) {
+	if opts.vcsType == "p4" || (opts.vcsType == "" && vcs.IsP4Client(repoDir)) {
 		return validateP4Refs(opts)
 	}
 

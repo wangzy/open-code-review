@@ -107,7 +107,7 @@ func (p *P4Runner) readFromP4Print(ctx context.Context, path string) (string, er
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	fileSpec := fmt.Sprintf("%s@=%s", path, p.ref)
+	fileSpec := fmt.Sprintf("%s@=%s", sanitizeP4Path(path), p.ref)
 	out, err := p.runP4(ctx, "print", "-q", fileSpec)
 	if err != nil {
 		return "", fmt.Errorf("p4 print %s: %w", fileSpec, err)
@@ -132,7 +132,7 @@ func (p *P4Runner) readLinesFromP4Print(ctx context.Context, path string, startL
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	fileSpec := fmt.Sprintf("%s@=%s", path, p.ref)
+	fileSpec := fmt.Sprintf("%s@=%s", sanitizeP4Path(path), p.ref)
 	cmd := exec.CommandContext(ctx, "p4", "print", "-q", fileSpec)
 	cmd.Dir = p.repoDir
 	if env := p.env(); len(env) > 0 {
@@ -168,6 +168,15 @@ const (
 	p4MaxFiles     = 500
 	p4FilesTimeout = 30 * time.Second
 )
+
+// sanitizeP4Path escapes Perforce special characters in file paths
+// to prevent revision-spec injection (@, #).
+func sanitizeP4Path(path string) string {
+	s := strings.ReplaceAll(path, "%", "%25")
+	s = strings.ReplaceAll(s, "@", "%40")
+	s = strings.ReplaceAll(s, "#", "%23")
+	return s
+}
 
 func p4Grep(ctx context.Context, repoDir string, env []string, ref, searchText string, caseSensitive, usePerlRegexp bool, filePatterns []string) (string, error) {
 	if strings.TrimSpace(searchText) == "" {
@@ -223,10 +232,10 @@ func p4Grep(ctx context.Context, repoDir string, env []string, ref, searchText s
 		}
 	}
 
-	return formatP4GrepOutput(outStr, err, errStr), nil
+	return formatP4GrepOutput(repoDir, outStr, err, errStr), nil
 }
 
-func formatP4GrepOutput(outStr string, err error, errStr string) string {
+func formatP4GrepOutput(repoDir, outStr string, err error, errStr string) string {
 	lines := strings.Split(strings.TrimRight(outStr, "\n"), "\n")
 
 	type match struct {
@@ -237,7 +246,11 @@ func formatP4GrepOutput(outStr string, err error, errStr string) string {
 	var fileOrder []string
 	seen := make(map[string]bool)
 
-	truncated := len(lines) >= p4GrepMaxCount
+	truncated := false
+	if len(lines) > p4GrepMaxCount {
+		lines = lines[:p4GrepMaxCount]
+		truncated = true
+	}
 
 	var sb strings.Builder
 	if truncated {
@@ -269,7 +282,7 @@ func formatP4GrepOutput(outStr string, err error, errStr string) string {
 		}
 
 		// Convert depot path to relative path if possible
-		relPath := depotPathToRelative(fname)
+		relPath := depotPathToRelative(repoDir, fname)
 
 		if !seen[relPath] {
 			seen[relPath] = true
@@ -300,8 +313,8 @@ func p4ListFiles(ctx context.Context, repoDir string, env []string, ref string) 
 
 	var args []string
 	if ref != "" {
-		// For a specific changelist, use p4 describe or p4 files
-		args = []string{"files", "-e", fmt.Sprintf("@=%s,@=%s", ref, ref)}
+		// For a specific changelist, use p4 files revision spec (without -e flag)
+		args = []string{"files", fmt.Sprintf("@=%s,@=%s", ref, ref)}
 	} else {
 		// For workspace, use p4 have to list files in the current workspace
 		args = []string{"have"}
@@ -334,7 +347,7 @@ func p4ListFiles(ctx context.Context, repoDir string, env []string, ref string) 
 		if path == "" {
 			continue
 		}
-		relPath := depotPathToRelative(path)
+		relPath := depotPathToRelative(repoDir, path)
 		if shouldSkipP4File(relPath) {
 			continue
 		}
@@ -372,20 +385,24 @@ func extractP4FilePath(line string) string {
 	return depotPart
 }
 
-func depotPathToRelative(depotPath string) string {
-	// Convert //depot/main/foo/bar.cpp to relative path
-	// Strip leading // and depot name prefix
+func depotPathToRelative(repoDir, depotPath string) string {
+	// If it's already a local absolute path, make it relative to repoDir
+	if filepath.IsAbs(depotPath) {
+		rel, err := filepath.Rel(repoDir, depotPath)
+		if err == nil && !strings.HasPrefix(rel, "..") {
+			return rel
+		}
+		return depotPath
+	}
+	// For depot paths (//depot/...), strip the depot prefix as a best-effort fallback.
+	// A proper implementation would use p4 where to translate depot paths.
 	if strings.HasPrefix(depotPath, "//") {
 		trimmed := depotPath[2:]
 		// Skip past the depot name if separated by /
 		if idx := strings.Index(trimmed, "/"); idx >= 0 {
-			// Also try skipping multiple depot path segments
+			trimmed = trimmed[idx+1:]
 		}
 		return trimmed
-	}
-	// If it's already a local path, make it relative to the repo dir
-	if filepath.IsAbs(depotPath) {
-		return strings.TrimPrefix(depotPath, "/")
 	}
 	return depotPath
 }
@@ -427,7 +444,7 @@ func p4DescribeChangelist(ctx context.Context, repoDir string, env []string, cl 
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "p4", "describe", "-du", "-S", cl)
+	cmd := exec.CommandContext(ctx, "p4", "describe", "-du", cl)
 	cmd.Dir = repoDir
 	if len(env) > 0 {
 		cmd.Env = append(os.Environ(), env...)
@@ -456,8 +473,8 @@ func p4WorkspaceDiff(ctx context.Context, repoDir string, env []string) (string,
 }
 
 func p4DiffRange(ctx context.Context, repoDir string, env []string, fromCL, toCL string) (string, error) {
-	// For a range, we need to get files changed in each changelist and diff them
-	// This is more complex; for now, generate a diff between the two states
+	// TODO: Implement properly by enumerating changed files between CLs
+	// and diffing only those, rather than diffing the entire depot.
 	ctx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
 
