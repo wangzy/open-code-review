@@ -453,7 +453,7 @@ func (a *Agent) loadP4Diffs(ctx context.Context) error {
 			return a.args.VCSRunner.ReadFile(ctx, path)
 		}
 		// Fallback: for workspace mode, read from disk; for range/commit, error
-		if a.args.Commit == "" && a.args.From == "" {
+		if mode == vcs.ModeWorkspace {
 			return diff.DefaultFileReader(ctx, a.args.RepoDir, path, "", nil)
 		}
 		return "", fmt.Errorf("VCSRunner is nil for non-workspace P4 mode; cannot read depot content")

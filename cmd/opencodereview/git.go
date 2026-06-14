@@ -24,8 +24,9 @@ func getCommitMessage(repoDir, commit, p4Client, p4Port, p4User string) (string,
 	if isNumeric(commit) {
 		cmd := exec.Command("p4", "describe", "-s", commit)
 		cmd.Dir = repoDir
+		cmd.Env = os.Environ()
 		if p4Client != "" {
-			cmd.Env = append(os.Environ(), "P4CLIENT="+p4Client)
+			cmd.Env = append(cmd.Env, "P4CLIENT="+p4Client)
 		}
 		if p4Port != "" {
 			cmd.Env = append(cmd.Env, "P4PORT="+p4Port)

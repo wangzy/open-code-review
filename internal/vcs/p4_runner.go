@@ -202,7 +202,7 @@ func p4Grep(ctx context.Context, repoDir string, env []string, ref, searchText s
 	// Add file patterns as path restrictions
 	for _, pattern := range filePatterns {
 		if strings.TrimSpace(pattern) != "" {
-			args = append(args, pattern)
+			args = append(args, sanitizeP4Path(pattern))
 		}
 	}
 

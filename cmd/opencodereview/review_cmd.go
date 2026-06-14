@@ -270,6 +270,7 @@ func resolveVCSType(flagValue string, repoDir string) vcs.Type {
 	default:
 		t, err := vcs.Detect(repoDir)
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: VCS auto-detection failed: %v (defaulting to git)\n", err)
 			return vcs.TypeGit // default to Git if auto-detection fails
 		}
 		return t
@@ -282,8 +283,8 @@ func requireRepo(dir string, vcsType string) error {
 	if err != nil {
 		return fmt.Errorf("resolve path: %w", err)
 	}
-	if vcsType == "p4" {
-		return nil // P4 repos are validated later in resolveRepoDir
+	if vcsType == "p4" || vcsType == "" {
+		return nil // P4 repos validated in resolveRepoDir; auto-detect defers here too
 	}
 	out, err := runGitCmd(repoDir, "rev-parse", "--git-dir")
 	if err != nil || len(out) == 0 {
