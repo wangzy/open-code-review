@@ -26,6 +26,7 @@ type jsonlWriter struct {
 	diffFrom   string
 	diffTo     string
 	diffCommit string
+	vcsType    string
 	file       *os.File
 	writer     *bufio.Writer
 	lastUUID   string // tracks chain of records via parentUuid
@@ -42,6 +43,7 @@ func newJSONLWriter(sessionID, repoDir, gitBranch, model string, opts SessionOpt
 		diffFrom:   opts.DiffFrom,
 		diffTo:     opts.DiffTo,
 		diffCommit: opts.DiffCommit,
+		vcsType:    opts.VCSType,
 	}
 	if err := jw.open(); err != nil {
 		return nil, err
@@ -145,6 +147,9 @@ func (jw *jsonlWriter) WriteSessionStart(startTime time.Time) string {
 	}
 	if jw.diffCommit != "" {
 		rec["diffCommit"] = jw.diffCommit
+	}
+	if jw.vcsType != "" {
+		rec["vcsType"] = jw.vcsType
 	}
 
 	jw.mu.Lock()

@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/open-code-review/open-code-review/internal/vcs"
 )
 
 func writeTestFile(t *testing.T, dir, name, content string) {
@@ -22,13 +25,12 @@ func TestReadLines_Disk_FullFile(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, dir, "a.txt", "line1\nline2\nline3\n")
 
-	fr := &FileReader{RepoDir: dir, Mode: ModeWorkspace}
+	fr := NewFileReader(dir, vcs.NewGitRunner(dir, "", nil))
 	lines, total, err := fr.ReadLines(context.Background(), "a.txt", 1, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// strings.Split("line1\nline2\nline3\n", "\n") produces 4 elements (trailing empty)
 	if total != 4 {
 		t.Errorf("totalLines = %d, want 4", total)
 	}
@@ -47,7 +49,7 @@ func TestReadLines_Disk_Window(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, dir, "b.txt", "a\nb\nc\nd\n")
 
-	fr := &FileReader{RepoDir: dir, Mode: ModeWorkspace}
+	fr := NewFileReader(dir, vcs.NewGitRunner(dir, "", nil))
 	lines, total, err := fr.ReadLines(context.Background(), "b.txt", 2, 2)
 	if err != nil {
 		t.Fatal(err)
@@ -71,7 +73,7 @@ func TestReadLines_Disk_EmptyFile(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, dir, "empty.txt", "")
 
-	fr := &FileReader{RepoDir: dir, Mode: ModeWorkspace}
+	fr := NewFileReader(dir, vcs.NewGitRunner(dir, "", nil))
 	lines, total, err := fr.ReadLines(context.Background(), "empty.txt", 1, 100)
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +91,7 @@ func TestReadLines_Disk_StartBeyondEOF(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, dir, "short.txt", "only\n")
 
-	fr := &FileReader{RepoDir: dir, Mode: ModeWorkspace}
+	fr := NewFileReader(dir, vcs.NewGitRunner(dir, "", nil))
 	lines, total, err := fr.ReadLines(context.Background(), "short.txt", 100, 10)
 	if err != nil {
 		t.Fatal(err)
@@ -107,13 +109,12 @@ func TestReadLines_Disk_TrailingNewline(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, dir, "trail.txt", "x\ny\n")
 
-	fr := &FileReader{RepoDir: dir, Mode: ModeWorkspace}
+	fr := NewFileReader(dir, vcs.NewGitRunner(dir, "", nil))
 	lines, total, err := fr.ReadLines(context.Background(), "trail.txt", 1, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// strings.Split("x\ny\n", "\n") = ["x","y",""] → 3 elements
 	if total != 3 {
 		t.Errorf("totalLines = %d, want 3", total)
 	}
@@ -129,13 +130,12 @@ func TestReadLines_Disk_NoTrailingNewline(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, dir, "notrail.txt", "x\ny")
 
-	fr := &FileReader{RepoDir: dir, Mode: ModeWorkspace}
+	fr := NewFileReader(dir, vcs.NewGitRunner(dir, "", nil))
 	lines, total, err := fr.ReadLines(context.Background(), "notrail.txt", 1, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// strings.Split("x\ny", "\n") = ["x","y"] → 2 elements
 	if total != 2 {
 		t.Errorf("totalLines = %d, want 2", total)
 	}
@@ -144,17 +144,55 @@ func TestReadLines_Disk_NoTrailingNewline(t *testing.T) {
 	}
 }
 
-func TestReadLines_GitShow_Window(t *testing.T) {
-	dir := setupTestRepo(t)
-	commit := getHeadCommit(t, dir)
+func testSetupRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("setup %v: %v\n%s", args, err, out)
+		}
+	}
+	run("git", "init")
+	run("git", "config", "user.email", "test@test.com")
+	run("git", "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(dir, "hello.go"), []byte("package main\n\nfunc Hello() {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "pkg"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "pkg", "util.go"), []byte("package pkg\n\nfunc Util() {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	run("git", "add", ".")
+	run("git", "commit", "-m", "init")
+	return dir
+}
 
-	fr := &FileReader{RepoDir: dir, Mode: ModeCommit, Ref: commit}
+func testGetHeadCommit(t *testing.T, dir string) string {
+	t.Helper()
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func TestReadLines_GitShow_Window(t *testing.T) {
+	dir := testSetupRepo(t)
+	commit := testGetHeadCommit(t, dir)
+
+	fr := NewFileReader(dir, vcs.NewGitRunner(dir, commit, nil))
 	lines, total, err := fr.ReadLines(context.Background(), "hello.go", 1, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// hello.go = "package main\n\nfunc Hello() {}\n" → 4 elements via strings.Split
 	if total != 4 {
 		t.Errorf("totalLines = %d, want 4", total)
 	}
@@ -178,7 +216,7 @@ func TestReadLines_Disk_RejectsParentTraversal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	fr := &FileReader{RepoDir: repoDir, Mode: ModeWorkspace}
+	fr := NewFileReader(repoDir, vcs.NewGitRunner(repoDir, "", nil))
 	if _, _, err := fr.ReadLines(context.Background(), escapePath, 1, 10); err == nil || !strings.Contains(err.Error(), "outside repository") {
 		t.Fatalf("ReadLines(%q) error = %v, want outside repository", escapePath, err)
 	}
@@ -194,7 +232,7 @@ func TestReadLines_Disk_AllowsParentSegmentWithinRepo(t *testing.T) {
 	}
 	writeTestFile(t, dir, "target.txt", "inside\n")
 
-	fr := &FileReader{RepoDir: dir, Mode: ModeWorkspace}
+	fr := NewFileReader(dir, vcs.NewGitRunner(dir, "", nil))
 	lines, _, err := fr.ReadLines(context.Background(), filepath.Join("pkg", "..", "target.txt"), 1, 10)
 	if err != nil {
 		t.Fatal(err)
@@ -215,7 +253,7 @@ func TestReadLines_Disk_AbsolutePathStaysUnderRepo(t *testing.T) {
 	}
 	writeTestFile(t, dir, filepath.Join("etc", "passwd"), "repo-passwd\n")
 
-	fr := &FileReader{RepoDir: dir, Mode: ModeWorkspace}
+	fr := NewFileReader(dir, vcs.NewGitRunner(dir, "", nil))
 	lines, _, err := fr.ReadLines(context.Background(), "/etc/passwd", 1, 10)
 	if err != nil {
 		t.Fatal(err)
@@ -227,7 +265,7 @@ func TestReadLines_Disk_AbsolutePathStaysUnderRepo(t *testing.T) {
 
 func TestReadLines_Disk_MissingFilePreservesReadError(t *testing.T) {
 	dir := t.TempDir()
-	fr := &FileReader{RepoDir: dir, Mode: ModeWorkspace}
+	fr := NewFileReader(dir, vcs.NewGitRunner(dir, "", nil))
 
 	_, _, err := fr.ReadLines(context.Background(), "missing.txt", 1, 10)
 	if err == nil {
@@ -270,7 +308,7 @@ func TestReadLines_Disk_RejectsSymlinkOutsideRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	fr := &FileReader{RepoDir: repoDir, Mode: ModeWorkspace}
+	fr := NewFileReader(repoDir, vcs.NewGitRunner(repoDir, "", nil))
 	if _, _, err := fr.ReadLines(context.Background(), "link.txt", 1, 10); err == nil || !strings.Contains(err.Error(), "outside repository") {
 		t.Fatalf("ReadLines(link.txt) error = %v, want outside repository", err)
 	}
@@ -287,7 +325,7 @@ func TestReadLines_Disk_AllowsSymlinkInsideRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	fr := &FileReader{RepoDir: dir, Mode: ModeWorkspace}
+	fr := NewFileReader(dir, vcs.NewGitRunner(dir, "", nil))
 	lines, _, err := fr.ReadLines(context.Background(), "link.txt", 1, 10)
 	if err != nil {
 		t.Fatal(err)
@@ -306,7 +344,7 @@ func TestExecute_Truncation(t *testing.T) {
 	}
 	writeTestFile(t, dir, "big.txt", sb.String())
 
-	fr := &FileReader{RepoDir: dir, Mode: ModeWorkspace}
+	fr := NewFileReader(dir, vcs.NewGitRunner(dir, "", nil))
 	p := NewFileRead(fr)
 
 	result, err := p.Execute(context.Background(), map[string]any{
@@ -334,7 +372,7 @@ func TestExecute_WithEndLine(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, dir, "c.txt", "a\nb\nc\nd\ne\n")
 
-	fr := &FileReader{RepoDir: dir, Mode: ModeWorkspace}
+	fr := NewFileReader(dir, vcs.NewGitRunner(dir, "", nil))
 	p := NewFileRead(fr)
 
 	result, err := p.Execute(context.Background(), map[string]any{

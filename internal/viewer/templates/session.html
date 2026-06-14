@@ -14,6 +14,7 @@
     <div class="meta">
         <span><strong>CWD:</strong> {{.Session.Summary.CWD}}</span>
         <span><strong>Branch:</strong> {{.Session.Summary.GitBranch}}</span>
+        <span><strong>VCS:</strong> {{if .Session.Summary.VCSType}}{{.Session.Summary.VCSType}}{{else}}git{{end}}</span>
         <span><strong>Mode:</strong> {{if .Session.Summary.ReviewMode}}{{.Session.Summary.ReviewMode}}{{else}}-{{end}}</span>
         {{if eq .Session.Summary.ReviewMode "range"}}
         <span><strong>From:</strong> <code>{{.Session.Summary.DiffFrom}}</code></span>

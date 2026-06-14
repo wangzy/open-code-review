@@ -41,6 +41,7 @@ type SessionHistory struct {
 	DiffFrom     string
 	DiffTo       string
 	DiffCommit   string
+	VCSType      string
 	StartTime    time.Time
 	EndTime      time.Time
 	persist      *jsonlWriter
@@ -99,6 +100,7 @@ type SessionOptions struct {
 	DiffFrom   string
 	DiffTo     string
 	DiffCommit string
+	VCSType    string
 }
 
 // New creates a new SessionHistory with the given repo directory.
@@ -113,6 +115,7 @@ func New(repoDir, gitBranch, model string, opts SessionOptions) *SessionHistory 
 		DiffFrom:     opts.DiffFrom,
 		DiffTo:       opts.DiffTo,
 		DiffCommit:   opts.DiffCommit,
+		VCSType:      opts.VCSType,
 		StartTime:    time.Now(),
 		FileSessions: make(map[string]*FileSession),
 	}

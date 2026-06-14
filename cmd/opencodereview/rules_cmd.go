@@ -43,7 +43,7 @@ func runRulesCheck(args []string) error {
 	}
 	filePath := rest[0]
 
-	resolvedRepo, err := resolveRepoDir(repoDir)
+	resolvedRepo, err := resolveRepoDir(repoDir, "")
 	if err != nil {
 		return err
 	}

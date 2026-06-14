@@ -110,6 +110,10 @@ type reviewOptions struct {
 	maxGitProcs    int
 	preview        bool
 	showHelp       bool
+	vcsType        string // --vcs: "git" (default), "p4", or "" for auto-detect
+	p4Client       string // --p4-client: Perforce client/workspace name
+	p4Port         string // --p4-port: Perforce server address
+	p4User         string // --p4-user: Perforce user name
 }
 
 func parseReviewFlags(args []string) (reviewOptions, error) {
@@ -131,6 +135,10 @@ func parseReviewFlags(args []string) (reviewOptions, error) {
 	a.IntVar(&opts.maxTools, "max-tools", 0, "max tool call rounds per file (0 = template default; min 10)")
 	a.IntVar(&opts.maxGitProcs, "max-git-procs", 16, "max concurrent git subprocesses")
 	a.BoolVarP(&opts.preview, "preview", "p", false, "preview which files will be reviewed without running the LLM")
+	a.StringVar(&opts.vcsType, "vcs", "", "version control system: git or p4 (auto-detect by default)")
+	a.StringVar(&opts.p4Client, "p4-client", "", "Perforce client/workspace name")
+	a.StringVar(&opts.p4Port, "p4-port", "", "Perforce server address (P4PORT)")
+	a.StringVar(&opts.p4User, "p4-user", "", "Perforce user name (P4USER)")
 
 	if err := a.Parse(args); err != nil {
 		return opts, fmt.Errorf("parse flags: %w", err)
@@ -175,6 +183,12 @@ func parseReviewFlags(args []string) (reviewOptions, error) {
 		return opts, fmt.Errorf("--max-git-procs must be a non-negative integer (0 means use default 16)")
 	}
 
+	switch opts.vcsType {
+	case "", "git", "p4":
+	default:
+		return opts, fmt.Errorf("invalid --vcs value %q: must be 'git' or 'p4'", opts.vcsType)
+	}
+
 	return opts, nil
 }
 
@@ -196,6 +210,15 @@ Examples:
   ocr review --commit abc123
   ocr review -c abc123
 
+  # Review a Perforce changelist
+  ocr review --vcs p4 --commit 12345
+
+  # Review pending Perforce workspace changes
+  ocr review --vcs p4
+
+  # Review Perforce changelist range
+  ocr review --vcs p4 --from 1000 --to 2000
+
   # Output JSON format
   ocr review --format json
   ocr review -f json
@@ -210,18 +233,22 @@ Examples:
 Flags:
   --audience string       output audience: human (show progress) or agent (summary only) (default "human")
   -b, --background string optional requirement/business context for the review
-  -c, --commit string     single commit hash or tag to review (vs its parent)
+  -c, --commit string     single commit hash/cl to review (vs its parent)
   -f, --format string     output format: text or json (default "text")
   --concurrency int       max concurrent file reviews (default 8)
-  --max-git-procs int     max concurrent git subprocesses (default 16)
-  --from string           source ref to start diff from (e.g., 'main')
+  --max-git-procs int     max concurrent subprocesses (default 16)
+  --from string           source ref/cl to start diff from (e.g., 'main' or a changelist number)
   --max-tools int         max tool call rounds per file (0 = template default; min 10)
   -p, --preview           preview which files will be reviewed without running the LLM
-  --repo string           root directory of the git repository (default: current dir)
+  --repo string           root directory of the repository (default: current dir)
   --rule string           path to JSON file with system review rules
   --timeout int           concurrent task timeout in minutes (default 10)
-  --to string             target ref to end diff at (e.g., 'feature-branch')
-  --tools string          path to JSON tools config file (default: embedded)`)
+  --to string             target ref/cl to end diff at (e.g., 'feature-branch' or a changelist number)
+  --tools string          path to JSON tools config file (default: embedded)
+  --vcs string            version control system: git or p4 (auto-detect by default)
+  --p4-client string      Perforce client/workspace name
+  --p4-port string        Perforce server address (P4PORT)
+  --p4-user string        Perforce user name (P4USER)`)
 }
 
 // --- config subcommand ---

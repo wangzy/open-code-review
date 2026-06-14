@@ -22,6 +22,7 @@ import (
 	"github.com/open-code-review/open-code-review/internal/stdout"
 	"github.com/open-code-review/open-code-review/internal/telemetry"
 	"github.com/open-code-review/open-code-review/internal/tool"
+	"github.com/open-code-review/open-code-review/internal/vcs"
 )
 
 // planBlockPattern matches the optional "Review Plan" section in a MAIN_TASK
@@ -115,6 +116,22 @@ type Args struct {
 	// GitRunner limits the total number of concurrent git subprocesses.
 	// When nil, subprocesses are spawned without a global limit.
 	GitRunner *gitcmd.Runner
+
+	// VCSType selects the version control backend ("git" or "p4").
+	VCSType vcs.Type
+
+	// VCSRunner is the VCS file/content runner used by tools (file_read, code_search, file_find).
+	// When nil, a Git runner is constructed from RepoDir and review refs.
+	VCSRunner vcs.Runner
+
+	// P4Client is the Perforce workspace/client name.
+	P4Client string
+
+	// P4Port is the Perforce server address.
+	P4Port string
+
+	// P4User is the Perforce user name.
+	P4User string
 
 	// Session is an optional session history instance for collecting conversation records.
 	// When nil, a default one is created automatically with git branch auto-detected from repoDir.
@@ -235,16 +252,17 @@ func New(args Args) *Agent {
 		args.CommentCollector = tool.NewCommentCollector()
 	}
 	if args.Session == nil {
-		gitBranch := detectGitBranch(args.RepoDir)
+		branch := detectBranch(args)
 		mode := args.ReviewMode
 		if mode == "" {
 			mode = reviewModeString(args.From, args.To, args.Commit)
 		}
-		args.Session = session.New(args.RepoDir, gitBranch, args.Model, session.SessionOptions{
+		args.Session = session.New(args.RepoDir, branch, args.Model, session.SessionOptions{
 			ReviewMode: mode,
 			DiffFrom:   args.From,
 			DiffTo:     args.To,
 			DiffCommit: args.Commit,
+			VCSType:    string(args.VCSType),
 		})
 	}
 	return &Agent{
@@ -365,6 +383,16 @@ func (a *Agent) recordWarning(warningType, file, message string) {
 
 // loadDiffs populates the diff-related fields.
 func (a *Agent) loadDiffs(ctx context.Context) error {
+	switch a.args.VCSType {
+	case vcs.TypePerforce:
+		return a.loadP4Diffs(ctx)
+	default:
+		return a.loadGitDiffs(ctx)
+	}
+}
+
+// loadGitDiffs uses the git diff.Provider to load and parse diffs.
+func (a *Agent) loadGitDiffs(ctx context.Context) error {
 	var provider *diff.Provider
 
 	switch {
@@ -379,6 +407,57 @@ func (a *Agent) loadDiffs(ctx context.Context) error {
 	parsed, err := provider.GetDiff(ctx)
 	if err != nil {
 		return fmt.Errorf("get diffs: %w", err)
+	}
+
+	a.diffs = parsed
+
+	for i := range parsed {
+		d := &parsed[i]
+		a.totalInsertions += d.Insertions
+		a.totalDeletions += d.Deletions
+	}
+
+	return nil
+}
+
+// loadP4Diffs generates diffs from Perforce and parses them.
+func (a *Agent) loadP4Diffs(ctx context.Context) error {
+	var p4Env []string
+	if a.args.P4Client != "" {
+		p4Env = append(p4Env, "P4CLIENT="+a.args.P4Client)
+	}
+	if a.args.P4Port != "" {
+		p4Env = append(p4Env, "P4PORT="+a.args.P4Port)
+	}
+	if a.args.P4User != "" {
+		p4Env = append(p4Env, "P4USER="+a.args.P4User)
+	}
+
+	var mode vcs.Mode
+	switch {
+	case a.args.Commit != "":
+		mode = vcs.ModeCommit
+	case a.args.From != "" && a.args.To != "":
+		mode = vcs.ModeRange
+	default:
+		mode = vcs.ModeWorkspace
+	}
+
+	diffText, err := vcs.P4Diff(ctx, a.args.RepoDir, p4Env, mode, a.args.From, a.args.To, a.args.Commit)
+	if err != nil {
+		return fmt.Errorf("p4 diff: %w", err)
+	}
+
+	reader := func(ctx context.Context, path string) (string, error) {
+		if a.args.VCSRunner != nil {
+			return a.args.VCSRunner.ReadFile(ctx, path)
+		}
+		return diff.DefaultFileReader(ctx, a.args.RepoDir, path, "", nil)
+	}
+
+	parsed, err := diff.ParseDiffTextWithVCS(ctx, diffText, a.args.RepoDir, reader)
+	if err != nil {
+		return fmt.Errorf("parse p4 diff: %w", err)
 	}
 
 	a.diffs = parsed
@@ -1478,6 +1557,13 @@ func reviewModeString(from, to, commit string) string {
 }
 
 // detectGitBranch returns the current git branch name for the given repo, or empty string on failure.
+func detectBranch(args Args) string {
+	if args.VCSType == vcs.TypePerforce {
+		return detectP4Branch(args)
+	}
+	return detectGitBranch(args.RepoDir)
+}
+
 func detectGitBranch(repoDir string) string {
 	cmd := exec.Command("git", "-C", repoDir, "rev-parse", "--abbrev-ref", "HEAD")
 	out, err := cmd.Output()
@@ -1485,4 +1571,15 @@ func detectGitBranch(repoDir string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+func detectP4Branch(args Args) string {
+	if args.P4Client != "" {
+		return args.P4Client
+	}
+	client, _, _, err := vcs.P4ClientInfo(args.RepoDir)
+	if err != nil {
+		return ""
+	}
+	return client
 }

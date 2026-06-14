@@ -18,6 +18,7 @@ import (
 	"github.com/open-code-review/open-code-review/internal/stdout"
 	"github.com/open-code-review/open-code-review/internal/telemetry"
 	"github.com/open-code-review/open-code-review/internal/tool"
+	"github.com/open-code-review/open-code-review/internal/vcs"
 )
 
 func runReview(args []string) error {
@@ -45,7 +46,7 @@ func runReview(args []string) error {
 		return fmt.Errorf("invalid config: %w", err)
 	}
 
-	repoDir, err := resolveRepoDir(opts.repoDir)
+	repoDir, err := resolveRepoDir(opts.repoDir, opts.vcsType)
 	if err != nil {
 		return fmt.Errorf("resolve repo: %w", err)
 	}
@@ -98,15 +99,39 @@ func runReview(args []string) error {
 
 	gitRunner := gitcmd.New(opts.maxGitProcs)
 
-	collector := tool.NewCommentCollector()
+	vcstype := resolveVCSType(opts.vcsType, repoDir)
 	mode := tool.ParseReviewMode(opts.from, opts.to, opts.commit)
-	ref, _ := mode.RefValue(opts.to, opts.commit)
-	fileReader := &tool.FileReader{
-		RepoDir: repoDir,
-		Mode:    mode,
-		Ref:     ref,
-		Runner:  gitRunner,
+
+	var vcsRunner vcs.Runner
+	switch vcstype {
+	case vcs.TypePerforce:
+		var ref string
+		if opts.commit != "" {
+			ref = opts.commit
+		} else if opts.to != "" {
+			ref = opts.to
+		}
+		vcsRunner = vcs.NewP4Runner(repoDir, ref, opts.p4Client, opts.p4Port, opts.p4User)
+	default:
+		var ref string
+		refInfo := vcs.RefInfo{
+			Mode:   vcsMode(mode),
+			From:   opts.from,
+			To:     opts.to,
+			Commit: opts.commit,
+		}
+		ref = refInfo.Ref
+		if ref == "" && opts.to != "" {
+			ref = opts.to
+		} else if ref == "" && opts.commit != "" {
+			ref = opts.commit
+		}
+		vcsRunner = vcs.NewGitRunner(repoDir, ref, gitRunner)
 	}
+
+	collector := tool.NewCommentCollector()
+	fileReader := tool.NewFileReader(repoDir, vcsRunner)
+
 	tools := buildToolRegistry(collector, fileReader)
 
 	ag := agent.New(agent.Args{
@@ -128,6 +153,11 @@ func runReview(args []string) error {
 		Model:                 model,
 		Background:            opts.background,
 		GitRunner:             gitRunner,
+		VCSType:               vcstype,
+		VCSRunner:             vcsRunner,
+		P4Client:              opts.p4Client,
+		P4Port:                opts.p4Port,
+		P4User:                opts.p4User,
 	})
 
 	// Silence progress output during execution; restore before Summary in agent mode.
@@ -188,7 +218,7 @@ func runReview(args []string) error {
 	return nil
 }
 
-func resolveRepoDir(input string) (string, error) {
+func resolveRepoDir(input string, vcsType string) (string, error) {
 	if input == "" {
 		var err error
 		input, err = os.Getwd()
@@ -200,11 +230,53 @@ func resolveRepoDir(input string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve absolute path: %w", err)
 	}
+
+	if vcsType == "p4" {
+		return resolveP4RepoDir(absPath)
+	}
+	return resolveGitRepoDir(absPath)
+}
+
+func resolveGitRepoDir(absPath string) (string, error) {
 	out, err := runGitCmd(absPath, "rev-parse", "--git-dir")
 	if err != nil || len(out) == 0 {
 		return "", fmt.Errorf("%s is not a git repository", absPath)
 	}
 	return absPath, nil
+}
+
+func resolveP4RepoDir(absPath string) (string, error) {
+	client, _, _, err := vcs.P4ClientInfo(absPath)
+	if err != nil {
+		return "", fmt.Errorf("%s is not a Perforce workspace: %w", absPath, err)
+	}
+	if client == "" {
+		return "", fmt.Errorf("%s is not a Perforce workspace (no client found)", absPath)
+	}
+	return absPath, nil
+}
+
+// resolveVCSType determines the VCS type from the flag value and auto-detection.
+func resolveVCSType(flagValue string, repoDir string) vcs.Type {
+	switch flagValue {
+	case "p4":
+		return vcs.TypePerforce
+	case "git":
+		return vcs.TypeGit
+	default:
+		return vcs.Detect(repoDir)
+	}
+}
+
+func vcsMode(mode tool.ReviewMode) vcs.Mode {
+	switch mode {
+	case tool.ModeCommit:
+		return vcs.ModeCommit
+	case tool.ModeRange:
+		return vcs.ModeRange
+	default:
+		return vcs.ModeWorkspace
+	}
 }
 
 // requireGitRepo validates that the given directory is part of a git repository.
@@ -221,6 +293,11 @@ func requireGitRepo(dir string) error {
 }
 
 func validateReviewRefs(repoDir string, opts reviewOptions) error {
+	// For Perforce, refs are changelist numbers — skip git rev-parse validation.
+	if opts.vcsType == "p4" || vcs.IsP4Client(repoDir) {
+		return validateP4Refs(opts)
+	}
+
 	refs := []struct {
 		flag string
 		ref  string
@@ -242,6 +319,29 @@ func validateReviewRefs(repoDir string, opts reviewOptions) error {
 				return fmt.Errorf("%s value %q is not a valid commit ref: %s", item.flag, item.ref, msg)
 			}
 			return fmt.Errorf("%s value %q is not a valid commit ref", item.flag, item.ref)
+		}
+	}
+	return nil
+}
+
+func validateP4Refs(opts reviewOptions) error {
+	refs := []struct {
+		flag string
+		ref  string
+	}{
+		{"--from", opts.from},
+		{"--to", opts.to},
+		{"--commit", opts.commit},
+	}
+	for _, item := range refs {
+		if item.ref == "" {
+			continue
+		}
+		// Changelist numbers must be numeric
+		for _, c := range item.ref {
+			if c < '0' || c > '9' {
+				return fmt.Errorf("%s value %q is not a valid changelist number", item.flag, item.ref)
+			}
 		}
 	}
 	return nil
@@ -272,7 +372,7 @@ func buildToolRegistry(collector *tool.CommentCollector, fr *tool.FileReader) *t
 	reg.Register(tool.NewFileRead(fr))
 	reg.Register(tool.NewFileFind(fr))
 	reg.Register(tool.NewFileReadDiff(tool.DiffMap{}))
-	reg.Register(tool.NewCodeSearch(fr))
+	reg.Register(tool.NewCodeSearch(fr.Runner))
 	reg.Register(&tool.CodeCommentProvider{Collector: collector})
 	return reg
 }
