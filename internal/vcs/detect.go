@@ -95,17 +95,7 @@ func P4ClientInfoWithContext(ctx context.Context, repoDir string) (client, port,
 		return "", "", "", err
 	}
 
-	for _, line := range strings.Split(string(out), "\n") {
-		if strings.HasPrefix(line, "Client name:") {
-			client = strings.TrimSpace(strings.TrimPrefix(line, "Client name:"))
-		}
-		if strings.HasPrefix(line, "Server address:") {
-			port = strings.TrimSpace(strings.TrimPrefix(line, "Server address:"))
-		}
-		if strings.HasPrefix(line, "User name:") {
-			user = strings.TrimSpace(strings.TrimPrefix(line, "User name:"))
-		}
-	}
+	parseP4Info(string(out), &client, &port, &user)
 	return client, port, user, nil
 }
 
@@ -122,16 +112,20 @@ func P4ClientInfoWithEnv(repoDir string, env []string) (client, port, user strin
 		return "", "", "", err
 	}
 
-	for _, line := range strings.Split(string(out), "\n") {
+	parseP4Info(string(out), &client, &port, &user)
+	return client, port, user, nil
+}
+
+func parseP4Info(output string, client, port, user *string) {
+	for _, line := range strings.Split(output, "\n") {
 		if strings.HasPrefix(line, "Client name:") {
-			client = strings.TrimSpace(strings.TrimPrefix(line, "Client name:"))
+			*client = strings.TrimSpace(strings.TrimPrefix(line, "Client name:"))
 		}
 		if strings.HasPrefix(line, "Server address:") {
-			port = strings.TrimSpace(strings.TrimPrefix(line, "Server address:"))
+			*port = strings.TrimSpace(strings.TrimPrefix(line, "Server address:"))
 		}
 		if strings.HasPrefix(line, "User name:") {
-			user = strings.TrimSpace(strings.TrimPrefix(line, "User name:"))
+			*user = strings.TrimSpace(strings.TrimPrefix(line, "User name:"))
 		}
 	}
-	return client, port, user, nil
 }
