@@ -43,6 +43,7 @@ func runRulesCheck(args []string) error {
 	}
 	filePath := rest[0]
 
+	// Empty vcsType triggers auto-detection in resolveRepoDir (supports Git and P4).
 	resolvedRepo, err := resolveRepoDir(repoDir, "")
 	if err != nil {
 		return err

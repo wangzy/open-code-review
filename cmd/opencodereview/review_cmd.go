@@ -250,7 +250,9 @@ func resolveGitRepoDir(absPath string) (string, error) {
 }
 
 func resolveP4RepoDir(absPath string) (string, error) {
-	client, _, _, err := vcs.P4ClientInfo(absPath)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	client, _, _, err := vcs.P4ClientInfoWithContext(ctx, absPath)
 	if err != nil {
 		return "", fmt.Errorf("%s is not a Perforce workspace: %w", absPath, err)
 	}

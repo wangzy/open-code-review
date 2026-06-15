@@ -60,14 +60,7 @@ func (p *P4Runner) runP4(ctx context.Context, args ...string) (string, error) {
 	return string(out), nil
 }
 
-func (p *P4Runner) runP4Output(ctx context.Context, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "p4", args...)
-	cmd.Dir = p.repoDir
-	if env := p.env(); len(env) > 0 {
-		cmd.Env = append(os.Environ(), env...)
-	}
-	return cmd.Output()
-}
+
 
 func (p *P4Runner) ReadFile(ctx context.Context, path string) (string, error) {
 	if p.ref == "" {
@@ -347,11 +340,18 @@ func p4ListFiles(ctx context.Context, repoDir string, env []string, ref string) 
 		if path == "" {
 			continue
 		}
-		relPath := depotPathToRelative(repoDir, path)
-		if shouldSkipP4File(relPath) {
+		// For commit/range mode, keep depot paths as-is for p4 print compatibility.
+		// In workspace mode, convert absolute local paths to repoDir-relative paths.
+		var filePath string
+		if ref != "" && strings.HasPrefix(path, "//") {
+			filePath = path
+		} else {
+			filePath = depotPathToRelative(repoDir, path)
+		}
+		if shouldSkipP4File(filePath) {
 			continue
 		}
-		files = append(files, relPath)
+		files = append(files, filePath)
 		if len(files) >= p4MaxFiles {
 			break
 		}

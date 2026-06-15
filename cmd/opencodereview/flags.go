@@ -110,7 +110,7 @@ type reviewOptions struct {
 	maxGitProcs    int
 	preview        bool
 	showHelp       bool
-	vcsType        string // --vcs: "git" (default), "p4", or "" for auto-detect
+	vcsType        string // --vcs: "git", "p4", or "" (default, auto-detect)
 	p4Client       string // --p4-client: Perforce client/workspace name
 	p4Port         string // --p4-port: Perforce server address
 	p4User         string // --p4-user: Perforce user name

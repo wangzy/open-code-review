@@ -1,6 +1,7 @@
 package vcs
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -83,6 +84,29 @@ func detectP4(repoDir string) bool {
 // P4ClientInfo returns the client name, port, and user from p4 info.
 func P4ClientInfo(repoDir string) (client, port, user string, _ error) {
 	return P4ClientInfoWithEnv(repoDir, nil)
+}
+
+// P4ClientInfoWithContext is like P4ClientInfo but accepts a context for timeout control.
+func P4ClientInfoWithContext(ctx context.Context, repoDir string) (client, port, user string, _ error) {
+	cmd := exec.CommandContext(ctx, "p4", "info")
+	cmd.Dir = repoDir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", "", "", err
+	}
+
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(line, "Client name:") {
+			client = strings.TrimSpace(strings.TrimPrefix(line, "Client name:"))
+		}
+		if strings.HasPrefix(line, "Server address:") {
+			port = strings.TrimSpace(strings.TrimPrefix(line, "Server address:"))
+		}
+		if strings.HasPrefix(line, "User name:") {
+			user = strings.TrimSpace(strings.TrimPrefix(line, "User name:"))
+		}
+	}
+	return client, port, user, nil
 }
 
 // P4ClientInfoWithEnv returns the client name, port, and user from p4 info,
