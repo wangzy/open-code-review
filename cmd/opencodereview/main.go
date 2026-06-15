@@ -76,9 +76,19 @@ Commands:
   viewer       Start the WebUI session viewer
   version      Show version information
 
+Supports both Git and Perforce repositories. Use --vcs p4 for Perforce.
+
 Examples:
+  # Git
   ocr review --from master --to dev        Review diff range
   ocr review --commit abc123               Review a single commit
+  ocr review                               Review pending workspace changes
+
+  # Perforce
+  ocr review --vcs p4                      Review pending changelist changes
+  ocr review --vcs p4 --commit 12345       Review a single changelist
+  ocr review --vcs p4 --from 100 --to 200  Review changelist range
+
   ocr config provider                      Interactive provider setup
   ocr config model                         Interactive model selection
   ocr config set llm.model opus-4-6        Set a config value

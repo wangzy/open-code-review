@@ -210,14 +210,21 @@ Examples:
   ocr review --commit abc123
   ocr review -c abc123
 
-  # Review a Perforce changelist
-  ocr review --vcs p4 --commit 12345
-
-  # Review pending Perforce workspace changes
+  # Perforce — review pending changelist changes (auto-detects p4)
   ocr review --vcs p4
 
-  # Review Perforce changelist range
+  # Perforce — review a specific changelist
+  ocr review --vcs p4 --commit 12345
+
+  # Perforce — review changelist range
   ocr review --vcs p4 --from 1000 --to 2000
+
+  # Perforce — specify client connection explicitly
+  ocr review --vcs p4 --p4-client my-workspace --p4-port ssl:p4.example.com:1666 --p4-user alice
+  ocr review --vcs p4 --p4-client my-workspace --commit 12345
+
+  # Perforce — review a specific directory
+  ocr review --vcs p4 --repo ~/projects/p4-client/code
 
   # Output JSON format
   ocr review --format json
@@ -233,22 +240,24 @@ Examples:
 Flags:
   --audience string       output audience: human (show progress) or agent (summary only) (default "human")
   -b, --background string optional requirement/business context for the review
-  -c, --commit string     single commit hash/cl to review (vs its parent)
+  -c, --commit string     single commit hash (git) or changelist number (p4) to review
   -f, --format string     output format: text or json (default "text")
   --concurrency int       max concurrent file reviews (default 8)
   --max-git-procs int     max concurrent subprocesses (default 16)
-  --from string           source ref/cl to start diff from (e.g., 'main' or a changelist number)
+  --from string           source ref/cl to start diff from (e.g., 'main' for git, changelist number for p4)
   --max-tools int         max tool call rounds per file (0 = template default; min 10)
   -p, --preview           preview which files will be reviewed without running the LLM
   --repo string           root directory of the repository (default: current dir)
   --rule string           path to JSON file with system review rules
   --timeout int           concurrent task timeout in minutes (default 10)
-  --to string             target ref/cl to end diff at (e.g., 'feature-branch' or a changelist number)
+  --to string             target ref/cl to end diff at (e.g., 'feature-branch' for git, changelist number for p4)
   --tools string          path to JSON tools config file (default: embedded)
   --vcs string            version control system: git or p4 (auto-detect by default)
-  --p4-client string      Perforce client/workspace name
-  --p4-port string        Perforce server address (P4PORT)
-  --p4-user string        Perforce user name (P4USER)`)
+
+Perforce-specific flags:
+  --p4-client string      Perforce client/workspace name (overrides P4CLIENT)
+  --p4-port string        Perforce server address (overrides P4PORT)
+  --p4-user string        Perforce user name (overrides P4USER)`)
 }
 
 // --- config subcommand ---
